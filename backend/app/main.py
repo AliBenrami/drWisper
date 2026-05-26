@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import api
+from api import api
 
 app = FastAPI(title="drwisper API", description="API for drwisper platform")
 
