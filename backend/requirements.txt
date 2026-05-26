@@ -5,3 +5,4 @@ transformers
 accelerate
 soundfile
 librosa
+imageio-ffmpeg
