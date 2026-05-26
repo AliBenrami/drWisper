@@ -18,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isRecording = false
     private var statusText = "Ready"
-    private var hasShownAccessibilityPasteWarning = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.log("launch build=\(AppInfo.build) path=\(AppInfo.executablePath) pid=\(getpid())")
@@ -110,14 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statusText = "Inserted text"
             } catch DrWisperError.accessibilityNotTrusted {
                 logger.log("paste_copied_but_accessibility_missing")
-                statusText = "Copied text"
+                statusText = "Copied text; enable Accessibility to auto-paste"
                 statusItem.button?.title = "drWisper"
                 rebuildMenu()
-
-                if !hasShownAccessibilityPasteWarning {
-                    hasShownAccessibilityPasteWarning = true
-                    showError("Copied text; auto-paste needs permission", DrWisperError.accessibilityNotTrusted)
-                }
                 return
             }
 
@@ -139,16 +133,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Hold fn to dictate", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Auto-paste: \(AXIsProcessTrusted() ? "Enabled" : "Needs Accessibility")", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Backend: \(transcriber.endpoint.absoluteString)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Build: \(AppInfo.build)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Path: \(AppInfo.executablePath)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Log: \(logger.logFile.path)", action: nil, keyEquivalent: ""))
 
         menu.addItem(NSMenuItem.separator())
+        let accessibility = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+        accessibility.target = self
+        menu.addItem(accessibility)
+
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
 
         statusItem.menu = menu
+    }
+
+    @objc private func openAccessibilitySettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 
     private func showError(_ title: String, _ error: Error) {
