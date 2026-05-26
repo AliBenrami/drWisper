@@ -6,6 +6,7 @@ import Darwin
 import Foundation
 
 private let appInstanceLock = SingleInstanceLock(identifier: "dev.drwisper.mac")
+private let logger = AppLogger()
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -19,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusText = "Ready"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        logger.log("launch build=\(AppInfo.build) path=\(AppInfo.executablePath) pid=\(getpid())")
+        terminateDuplicateProcesses()
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -46,7 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func promptForAccessibilityIfNeeded() {
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        let isTrusted = AXIsProcessTrustedWithOptions(options)
+        logger.log("accessibility_trusted=\(isTrusted)")
     }
 
     private func startRecording() {
@@ -55,10 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             isRecording = true
+            logger.log("recording_started")
             statusText = "Recording..."
             statusItem.button?.title = "● drWisper"
             rebuildMenu()
         } catch {
+            logger.log("recording_start_failed error=\(error.localizedDescription)")
             showError("Could not start recording", error)
         }
     }
@@ -72,18 +78,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             let fileURL = try recorder.stop()
+            logger.log("recording_stopped file=\(fileURL.path)")
             Task {
                 await transcribeAndPaste(fileURL)
             }
         } catch {
+            logger.log("recording_stop_failed error=\(error.localizedDescription)")
             showError("Could not finish recording", error)
         }
     }
 
     private func transcribeAndPaste(_ fileURL: URL) async {
         do {
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue ?? -1
+            logger.log("transcription_started file_size=\(fileSize) endpoint=\(transcriber.endpoint.absoluteString)")
             let text = try await transcriber.transcribe(fileURL: fileURL)
             try? FileManager.default.removeItem(at: fileURL)
+            logger.log("transcription_succeeded text_length=\(text.count)")
 
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 statusText = "No speech detected"
@@ -92,12 +103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            pasteService.paste(text)
+            try pasteService.paste(text)
+            logger.log("paste_succeeded")
             statusText = "Inserted text"
             statusItem.button?.title = "drWisper"
             rebuildMenu()
         } catch {
             try? FileManager.default.removeItem(at: fileURL)
+            logger.log("transcription_or_paste_failed error=\(error.localizedDescription)")
             showError("Transcription failed", error)
         }
     }
@@ -114,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Backend: \(transcriber.endpoint.absoluteString)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Build: \(AppInfo.build)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Path: \(AppInfo.executablePath)", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Log: \(logger.logFile.path)", action: nil, keyEquivalent: ""))
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -132,6 +146,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
+    }
+
+    private func terminateDuplicateProcesses() {
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let currentPath = AppInfo.executablePath
+
+        for app in NSWorkspace.shared.runningApplications {
+            guard app.processIdentifier != currentPID else { continue }
+            guard app.localizedName == "DrWisperMac" || app.localizedName == "drWisper" else { continue }
+
+            let duplicatePath = app.executableURL?.path ?? "unknown"
+            logger.log("terminating_duplicate pid=\(app.processIdentifier) path=\(duplicatePath) current_path=\(currentPath)")
+            app.terminate()
+        }
     }
 }
 
@@ -267,21 +295,33 @@ final class TranscriptionClient {
 }
 
 final class PasteService {
-    func paste(_ text: String) {
+    func paste(_ text: String) throws {
+        guard AXIsProcessTrusted() else {
+            throw DrWisperError.accessibilityNotTrusted
+        }
+
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        guard pasteboard.setString(text, forType: .string) else {
+            throw DrWisperError.pasteboardWriteFailed
+        }
 
-        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            throw DrWisperError.eventSourceUnavailable
+        }
         let keyCode = CGKeyCode(kVK_ANSI_V)
 
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
-        keyDown?.flags = .maskCommand
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        keyUp?.flags = .maskCommand
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        else {
+            throw DrWisperError.keyboardEventUnavailable
+        }
 
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
 }
 
@@ -318,6 +358,39 @@ enum AppInfo {
     }
 }
 
+final class AppLogger {
+    let logFile: URL
+    private let queue = DispatchQueue(label: "dev.drwisper.mac.logger")
+    private let formatter: ISO8601DateFormatter
+
+    init() {
+        let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("drWisper", isDirectory: true)
+
+        try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+        logFile = logsDirectory.appendingPathComponent("drwisper.log")
+        formatter = ISO8601DateFormatter()
+    }
+
+    func log(_ message: String) {
+        let line = "\(formatter.string(from: Date())) \(message)\n"
+        queue.async { [logFile] in
+            if let data = line.data(using: .utf8) {
+                if FileManager.default.fileExists(atPath: logFile.path),
+                   let handle = try? FileHandle(forWritingTo: logFile) {
+                    _ = try? handle.seekToEnd()
+                    try? handle.write(contentsOf: data)
+                    try? handle.close()
+                } else {
+                    try? data.write(to: logFile)
+                }
+            }
+        }
+    }
+}
+
 struct TranscriptionResponse: Decodable {
     let text: String
 }
@@ -325,6 +398,10 @@ struct TranscriptionResponse: Decodable {
 enum DrWisperError: LocalizedError {
     case noActiveRecording
     case badServerResponse(String)
+    case accessibilityNotTrusted
+    case pasteboardWriteFailed
+    case eventSourceUnavailable
+    case keyboardEventUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -332,6 +409,14 @@ enum DrWisperError: LocalizedError {
             "No active recording was found."
         case let .badServerResponse(body):
             "Backend returned an error: \(body)"
+        case .accessibilityNotTrusted:
+            "Accessibility permission is not enabled for drWisper. Enable it in System Settings > Privacy & Security > Accessibility."
+        case .pasteboardWriteFailed:
+            "Could not write the transcription to the macOS pasteboard."
+        case .eventSourceUnavailable:
+            "Could not create a macOS keyboard event source for paste."
+        case .keyboardEventUnavailable:
+            "Could not create the Cmd+V keyboard event."
         }
     }
 }
