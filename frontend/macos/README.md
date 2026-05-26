@@ -24,6 +24,8 @@ The app appears in the macOS menu bar. Hold `fn` to record, release it to send t
 http://127.0.0.1:8000/api/transcribe/
 ```
 
+The generated app bundle allows HTTP traffic because the development backend runs on a private Tailscale/local address instead of HTTPS.
+
 ## Update
 
 Use the packaged app for normal testing. Quit any running copy before opening the rebuilt app:

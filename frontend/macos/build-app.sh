@@ -40,6 +40,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>drWisper records audio while the activation key is held so it can send speech to your transcription backend.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+  </dict>
 </dict>
 </plist>
 PLIST
