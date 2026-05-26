@@ -76,6 +76,7 @@ async def audioToText(file: UploadFile = File(...), model="openai/whisper-large-
     try:
         result = asr_pipeline(
             temp_audio_path,
+            return_timestamps=True,
             generate_kwargs={
                 "language": "english",
                 "task": "transcribe",
@@ -85,6 +86,11 @@ async def audioToText(file: UploadFile = File(...), model="openai/whisper-large-
         return {
             "text": result["text"]
         }
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"transcription failed: {error}",
+        ) from error
 
     finally:
         os.remove(temp_audio_path)
