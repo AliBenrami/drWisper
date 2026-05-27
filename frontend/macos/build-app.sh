@@ -6,6 +6,7 @@ APP_DIR="$SCRIPT_DIR/build/drWisper.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 EXECUTABLE_NAME="drWisper"
+LOCAL_SIGNING_IDENTITY="drWisper Local Code Signing"
 
 cd "$SCRIPT_DIR"
 swift build -c release
@@ -51,6 +52,21 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 PLIST
 
 /usr/bin/sed -i '' "s/__BUILD_VERSION__/$BUILD_VERSION/g" "$CONTENTS_DIR/Info.plist"
-/usr/bin/codesign --force --deep --sign - "$APP_DIR"
+
+SIGNING_IDENTITY="${DRWISPER_CODESIGN_IDENTITY:-}"
+if [[ -z "$SIGNING_IDENTITY" ]] && /usr/bin/security find-identity -v -p codesigning 2>/dev/null | /usr/bin/grep -Fq "\"$LOCAL_SIGNING_IDENTITY\""; then
+  SIGNING_IDENTITY="$LOCAL_SIGNING_IDENTITY"
+fi
+
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+  SIGNING_IDENTITY="-"
+  {
+    echo "warning: signing drWisper with an ad-hoc signature."
+    echo "warning: Accessibility permission may reset after each rebuild."
+    echo "warning: run ./setup-local-signing.sh once to create a stable local signing identity."
+  } >&2
+fi
+
+/usr/bin/codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
 
 echo "$APP_DIR"

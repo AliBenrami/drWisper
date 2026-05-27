@@ -46,6 +46,15 @@ Or use the one-command update runner:
 
 The update runner installs the app at `~/Applications/drWisper.app`. Grant Accessibility permission to that installed app, not to the temporary build output.
 
+For local development, create a stable signing identity once before rebuilding the app repeatedly:
+
+```bash
+./setup-local-signing.sh
+./update-and-run.sh
+```
+
+Without a stable signing identity, macOS may reset Accessibility permission after each rebuild because the ad-hoc code signature changes.
+
 When the backend returns text, the app puts it on the pasteboard and simulates `Cmd+V` into the active text field.
 
 ## Permissions
@@ -55,7 +64,7 @@ macOS needs:
 - Microphone permission for recording.
 - Accessibility permission for global key listening and simulated paste.
 
-If paste does not work, open System Settings -> Privacy & Security -> Accessibility and enable the terminal or app host running `swift run`.
+If paste does not work, open System Settings -> Privacy & Security -> Accessibility and enable `~/Applications/drWisper.app`. If you run from SwiftPM instead, enable the terminal app that launched `swift run`.
 
 ## Backend URL
 

@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isRecording = false
     private var statusText = "Ready"
+    private var isShowingAccessibilityAlert = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.log("launch build=\(AppInfo.build) path=\(AppInfo.executablePath) pid=\(getpid())")
@@ -112,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statusText = "Copied text; enable Accessibility to auto-paste"
                 statusItem.button?.title = "drWisper"
                 rebuildMenu()
+                showAccessibilityRequiredAlert()
                 return
             }
 
@@ -151,7 +153,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
+        openAccessibilitySettingsPage()
+    }
+
+    private func openAccessibilitySettingsPage() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
+    private func showAccessibilityRequiredAlert() {
+        guard !isShowingAccessibilityAlert else { return }
+        isShowingAccessibilityAlert = true
+        defer { isShowingAccessibilityAlert = false }
+
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Enable Accessibility to auto-paste"
+        alert.informativeText = """
+        drWisper copied the transcription, but macOS blocked the automatic Cmd+V event.
+
+        Enable Accessibility for this app:
+        \(AppInfo.executablePath)
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Not Now")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            openAccessibilitySettingsPage()
+        }
     }
 
     private func showError(_ title: String, _ error: Error) {
@@ -327,19 +359,29 @@ final class PasteService {
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             throw DrWisperError.eventSourceUnavailable
         }
-        let keyCode = CGKeyCode(kVK_ANSI_V)
+        source.localEventsSuppressionInterval = 0
 
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        let commandKeyCode = CGKeyCode(kVK_Command)
+        let vKeyCode = CGKeyCode(kVK_ANSI_V)
+
+        guard let commandDown = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: true),
+              let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false),
+              let commandUp = CGEvent(keyboardEventSource: source, virtualKey: commandKeyCode, keyDown: false)
         else {
             throw DrWisperError.keyboardEventUnavailable
         }
 
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        commandDown.flags = .maskCommand
+        vDown.flags = .maskCommand
+        vUp.flags = .maskCommand
+        commandUp.flags = []
 
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        usleep(50_000)
+        commandDown.post(tap: .cghidEventTap)
+        vDown.post(tap: .cghidEventTap)
+        vUp.post(tap: .cghidEventTap)
+        commandUp.post(tap: .cghidEventTap)
     }
 }
 
