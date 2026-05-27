@@ -15,7 +15,7 @@ Or build a small `.app` bundle:
 cd frontend/macos
 chmod +x build-app.sh
 ./build-app.sh
-open build/DrWisper.app
+open build/drWisper.app
 ```
 
 The app appears in the macOS menu bar. Hold `fn` to record, release it to send the WAV recording to:
@@ -23,6 +23,28 @@ The app appears in the macOS menu bar. Hold `fn` to record, release it to send t
 ```text
 http://127.0.0.1:8000/api/transcribe/
 ```
+
+The generated app bundle allows HTTP traffic because the development backend runs on a private Tailscale/local address instead of HTTPS.
+
+## Update
+
+Use the packaged app for normal testing. Quit any running copy before opening the rebuilt app:
+
+```bash
+pkill -f 'Contents/MacOS/(DrWisperMac|drWisper)'
+./build-app.sh
+open build/drWisper.app
+```
+
+The menu shows the packaged Git build and executable path. If the path is not `~/Applications/drWisper.app/Contents/MacOS/drWisper` after running `update-and-run.sh`, an old development executable is still running.
+
+Or use the one-command update runner:
+
+```bash
+./update-and-run.sh
+```
+
+The update runner installs the app at `~/Applications/drWisper.app`. Grant Accessibility permission to that installed app, not to the temporary build output.
 
 When the backend returns text, the app puts it on the pasteboard and simulates `Cmd+V` into the active text field.
 
